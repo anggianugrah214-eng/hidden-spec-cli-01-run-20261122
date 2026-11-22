@@ -63,6 +63,22 @@ class Tree {
   get(p: string): string | null {
     return this.now.has(p) ? this.now.get(p)! : this.original(p);
   }
+  /**
+   * True when the path exists in the tree as the edits leave it. Unlike get(),
+   * a directory on disk counts as existing: section 2's `exists` is for a path
+   * that exists, and creating a file over a directory must fail cleanly with
+   * `exists` instead of crashing in the write phase (EISDIR). A path an
+   * earlier edit deleted counts as not existing.
+   */
+  exists(p: string): boolean {
+    if (this.now.has(p)) return this.now.get(p) !== null;
+    try {
+      statSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 type Edit = (tree: Tree) => void;
@@ -94,7 +110,7 @@ function jsonEdit(v: unknown): Edit | null {
     const text = o.file_text;
     return (tree) => {
       if (!safe(p)) throw new Fail('unsafe', p);
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.exists(p)) throw new Fail('exists', p);
       tree.now.set(p, text);
     };
   }
@@ -457,7 +473,7 @@ function unifiedSectionEdit(s: Section, strict: boolean): Edit {
     if (isCreate) {
       const p = newP ?? '';
       if (!safe(p)) throw new Fail('unsafe', p);
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.exists(p)) throw new Fail('exists', p);
       const plus: string[] = [];
       for (const h of s.hunks) for (const b of h.body) if (b.kind === 'new') plus.push(b.text);
       let fin = true;
@@ -491,7 +507,7 @@ function unifiedSectionEdit(s: Section, strict: boolean): Edit {
       if (!safe(np)) throw new Fail('unsafe', np);
       const before = tree.get(op);
       if (before === null) throw new Fail('missing', op);
-      if (tree.get(np) !== null) throw new Fail('exists', np);
+      if (tree.exists(np)) throw new Fail('exists', np);
       const f = applyHunks(splitFile(before), s.hunks, strict, op);
       tree.now.set(op, null);
       tree.now.set(np, joinFile(f));
@@ -572,7 +588,7 @@ function searchReplaceEdit(b: SRBlock, strict: boolean): Edit {
     const p = b.path;
     if (!safe(p)) throw new Fail('unsafe', p);
     if (b.oldLines.length === 0) {
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.exists(p)) throw new Fail('exists', p);
       tree.now.set(p, b.newLines.length === 0 ? '' : b.newLines.join('\n') + '\n');
       return;
     }
@@ -789,7 +805,7 @@ function v4aSectionEdit(s: V4aSection, strict: boolean): Edit {
     const p = s.path;
     if (!safe(p)) throw new Fail('unsafe', p);
     if (s.kind === 'add') {
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.exists(p)) throw new Fail('exists', p);
       tree.now.set(p, s.fileLines.length === 0 ? '' : s.fileLines.join('\n') + '\n');
       return;
     }
@@ -801,7 +817,7 @@ function v4aSectionEdit(s: V4aSection, strict: boolean): Edit {
     if (s.moveTo !== null && !safe(s.moveTo)) throw new Fail('unsafe', s.moveTo);
     const before = tree.get(p);
     if (before === null) throw new Fail('missing', p);
-    if (s.moveTo !== null && tree.get(s.moveTo) !== null) throw new Fail('exists', s.moveTo);
+    if (s.moveTo !== null && tree.exists(s.moveTo)) throw new Fail('exists', s.moveTo);
     let f = splitFile(before);
     let cursor = 0;
     for (const ch of s.chunks) {
